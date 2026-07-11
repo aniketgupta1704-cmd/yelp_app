@@ -12,13 +12,46 @@ import faiss
 import torch
 torch.set_num_threads(1)
 
+from pathlib import Path
 from sentence_transformers import SentenceTransformer
 from transformers import (
     DistilBertForSequenceClassification,
     AutoTokenizer
 )
-from huggingface_hub import InferenceClient
+from huggingface_hub import InferenceClient, hf_hub_download, snapshot_download
 
+# HF Dataset repo containing app artifacts
+HF_DATASET_REPO = "aniket32/yelp-review-intelligence-artifacts"
+
+# Local paths (populated from HF on first run)
+DATA_DIR = Path("./data")
+DATA_DIR.mkdir(exist_ok=True)
+
+
+def _ensure_file(filename: str) -> str:
+    """Download a single file from HF Dataset if not present locally."""
+    local_path = DATA_DIR / filename
+    if not local_path.exists():
+        hf_hub_download(
+            repo_id=HF_DATASET_REPO,
+            filename=filename,
+            repo_type="dataset",
+            local_dir=str(DATA_DIR),
+        )
+    return str(local_path)
+
+
+def _ensure_model_folder() -> str:
+    """Download the entire distilbert_sentiment folder if not present."""
+    local_folder = DATA_DIR / "distilbert_sentiment"
+    if not local_folder.exists() or not any(local_folder.iterdir()):
+        snapshot_download(
+            repo_id=HF_DATASET_REPO,
+            repo_type="dataset",
+            allow_patterns="distilbert_sentiment/*",
+            local_dir=str(DATA_DIR),
+        )
+    return str(local_folder)
 
 @st.cache_resource
 def load_embedding_model():
@@ -27,10 +60,9 @@ def load_embedding_model():
 
 @st.cache_resource
 def load_sentiment_model():
-    tokenizer = AutoTokenizer.from_pretrained('./data/distilbert_sentiment')
-    model = DistilBertForSequenceClassification.from_pretrained(
-        './data/distilbert_sentiment'
-    )
+    model_path = _ensure_model_folder()
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    model = DistilBertForSequenceClassification.from_pretrained(model_path)
     model.eval()
     model.to("cpu")
     return tokenizer, model
@@ -38,7 +70,8 @@ def load_sentiment_model():
 
 @st.cache_data
 def load_reviews():
-    df = pd.read_csv('./data/app_reviews.csv')
+    csv_path = _ensure_file("app_reviews.csv")
+    df = pd.read_csv(csv_path)
     df['date'] = pd.to_datetime(df['date'])
     df['year'] = df['date'].dt.year
     return df
@@ -46,22 +79,24 @@ def load_reviews():
 
 @st.cache_resource
 def load_faiss_index():
-    return faiss.read_index('./data/faiss_index.bin')
+    index_path = _ensure_file("faiss_index.bin")
+    return faiss.read_index(index_path)
 
 
 @st.cache_data
 def load_embeddings():
-    """Load raw embeddings for UMAP visualization."""
-    return np.load('./data/embeddings.npy')
+    """Load raw embeddings for t-SNE visualization."""
+    emb_path = _ensure_file("embeddings.npy")
+    return np.load(emb_path)
 
 
 @st.cache_resource
 def load_hf_client():
     return InferenceClient(token=st.secrets["HF_TOKEN"])
 
+
 @st.cache_resource
 def load_local_llm():
-    """Fallback local LLM — small, CPU-friendly."""
     from transformers import pipeline
     return pipeline(
         "text2text-generation",
@@ -69,19 +104,19 @@ def load_local_llm():
         device=-1
     )
 
+
 @st.cache_data
 def compute_2d_projection():
     """Compute 2D t-SNE projection of all embeddings. Cached — runs once."""
     from sklearn.manifold import TSNE
     embeddings = load_embeddings()
-    
-    # Sample for speed — t-SNE is slower than UMAP
+
     n_samples = min(5000, len(embeddings))
     sample_indices = np.random.RandomState(42).choice(
         len(embeddings), n_samples, replace=False
     )
     sample_embeddings = embeddings[sample_indices]
-    
+
     reducer = TSNE(
         n_components=2,
         perplexity=30,
