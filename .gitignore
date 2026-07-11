@@ -1,0 +1,29 @@
+# Sensitive
+.streamlit/secrets.toml
+
+# Data (too large, download separately)
+data/*.bin
+data/*.npy
+data/*.csv
+data/distilbert_sentiment/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+
+# Env
+venv/
+.venv/
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Streamlit cache
+.streamlit/cache/
